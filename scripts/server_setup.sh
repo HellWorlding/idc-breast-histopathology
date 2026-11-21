@@ -16,7 +16,7 @@ log "2. 파이썬 가상환경 (CPU용 torch)"
 . .venv/bin/activate
 pip install -q --upgrade pip
 pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu
-pip install -q numpy pandas scikit-learn xgboost pillow tqdm matplotlib kaggle tabulate
+pip install -q numpy pandas scikit-learn xgboost pillow tqdm matplotlib kaggle six tabulate  # six: kaggle 2.2.5가 필요로 하지만 의존성에 빠져 있음
 python -c "import torch, torchvision, xgboost, sklearn; print('torch', torch.__version__, '| cuda', torch.cuda.is_available(), '| xgboost', xgboost.__version__, '| sklearn', sklearn.__version__)"
 
 log "3. Kaggle 데이터 다운로드"
