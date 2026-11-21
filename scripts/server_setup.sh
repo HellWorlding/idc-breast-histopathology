@@ -21,13 +21,20 @@ python -c "import torch, torchvision, xgboost, sklearn; print('torch', torch.__v
 
 log "3. Kaggle 데이터 다운로드"
 ZIP=data/raw/breast-histopathology-images.zip
+ZIP_BYTES=3326820824  # Kaggle 원본 zip 크기. 다르면 받다가 끊긴 파일로 보고 다시 받는다
 mkdir -p data/raw
+zip_size() { stat -c %s "$ZIP" 2>/dev/null || echo 0; }
+if [ -f "$ZIP" ] && [ "$(zip_size)" -ne "$ZIP_BYTES" ]; then
+  echo "zip 크기 $(zip_size) != $ZIP_BYTES: 불완전한 파일로 보고 지운 뒤 다시 받음"
+  rm -f "$ZIP" data/raw/.extracted
+fi
 if [ ! -f "$ZIP" ]; then
   if [ ! -f ~/.kaggle/kaggle.json ] && [ ! -f ~/.kaggle/access_token ] && [ -z "${KAGGLE_API_TOKEN:-}" ]; then
     echo "kaggle 토큰 없음: ~/.kaggle/kaggle.json (또는 access_token)을 넣고 chmod 600 후 다시 실행"; exit 1
   fi
   kaggle datasets download -d paultimothymooney/breast-histopathology-images -p data/raw
 fi
+[ "$(zip_size)" -eq "$ZIP_BYTES" ] || { echo "다운로드 후에도 zip 크기 $(zip_size) != $ZIP_BYTES"; exit 1; }
 ls -l "$ZIP"
 
 log "4. 압축 해제 (중복 폴더 IDC_regular_ps50_idx5 제외)"
