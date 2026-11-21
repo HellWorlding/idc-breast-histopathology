@@ -21,6 +21,7 @@
 
 - 파일 이름 검사: 파싱 실패, 이름 속 class와 폴더 라벨 불일치, 이름 속 환자와 폴더 불일치, 같은 환자 안 좌표 중복, 50px 격자 밖 좌표가 모두 0건이다
 - 50×50이 아닌 가장자리 패치 2,302개(0.8%)는 흰색으로 채워 50×50으로 맞췄다
+  - 가장 작은 조각은 50×1이다. 가장자리 패치의 양성 비율은 train 1.0%, val 0.6%로 전체(28%)보다 훨씬 낮고, 면적 25% 미만 조각(train 339개)에는 양성이 없다. "흰 패딩이 크면 음성"이라는 지름길이 데이터에 있다는 뜻이라 배경 패치 성능을 따로 확인한다
 
 환자 단위 통계 (279명)
 
@@ -51,28 +52,63 @@
 
 ## 방법
 1. **환자 단위 분할** 70/15/15, 환자별 양성 비율로 층화, 세트 간 겹치는 환자 0명 검사 (`src/split.py`)
+   - 분할 결과(환자 ID 목록)를 `data/splits/*_patients.csv`로 저장소에 올려, 다른 컴퓨터에서도 `--from-lists`로 똑같은 분할을 재현한다
 2. **평가 기준을 먼저 고정**: FN 비용 = FP 비용의 k배 (k = 1, 3, 5, 7, 10), 주 지표는 기대 비용, 보조 지표는 재현율, 정밀도, F2, PR-AUC
-3. ImageNet 사전학습 ResNet18 전이학습 (`src/train.py`)
-4. 임계값과 하이퍼파라미터는 검증 세트로만 정하고, 테스트 세트는 마지막에 한 번만 쓴다
+   - k를 하나로 정하지 않은 이유: 판정 단위가 패치라 패치 하나를 놓치는 비용은 환자를 놓치는 것보다 작고, 실제 k는 의료진과 정할 값이라 구간으로 비교한다
+3. **전처리** (`outputs/figures/preprocessing.png`): 가장자리 패치 흰색 패딩 → 50→224 확대 → ImageNet 평균/표준편차 정규화
+   - 정규화에 ImageNet 통계를 써서 우리 데이터 어느 세트에서도 통계를 계산하지 않는다 (정규화 누수 없음)
+4. **CNN 전이학습** (`src/train.py`): ImageNet 사전학습 ResNet18
+   - 베이스라인: 백본 고정, 마지막 층만 학습
+   - 이후: 백본 전체 학습 + 증강 비교. 증강은 GPU에서 배치 단위로 한다
+     - flip: 좌우/상하 뒤집기, 90도 회전 (병리 패치는 방향에 의미가 없음)
+     - flipcolor: 위 + 밝기·대비·채도·색조 작은 무작위 변화 (`outputs/figures/color_aug.png`). 양성이 더 어둡다는 색 지름길과 염색 차이를 줄이려는 목적
+   - 불균형 대응: 양성 손실 가중치 pos_weight = 2.58 (train 음성/양성 비율)
+   - 에폭 선택은 val PR-AUC (임계값과 무관한 지표)
+5. **비교용 비-딥러닝 모델** (`src/tabular.py`, CPU 서버에서 병렬 실행)
+   - 고정 ResNet18 512차원 피처 → 로지스틱 회귀 / RandomForest / XGBoost
+   - 색 통계 31개 피처(RGB 평균·표준편차, 흰 픽셀 비율, 히스토그램) → XGBoost: 색만으로 얼마나 맞히는지 = 색 지름길의 크기
+6. **임계값 선택**: val 예측으로 k별 기대 비용 최소 임계값을 고르고 이론값 1/(1+k)와 비교한다
+7. 임계값과 하이퍼파라미터는 검증 세트로만 정하고, **테스트 세트는 모든 선택이 끝난 뒤 한 번만** 쓴다
 
 ## 결과 (진행 중, 검증 세트)
-| 실험 | 설명 | PR-AUC | 재현율 | 정밀도 | FN | FP |
-|---|---|---|---|---|---|---|
-| baseline_linear | 백본 고정, 마지막 층만 학습, 임계값 0.5 | 0.8012 | 0.7195 | 0.7704 | 3,352 | 2,563 |
+| 실험 | 설명 | PR-AUC | ROC-AUC | 재현율 | 정밀도 | FN | FP |
+|---|---|---|---|---|---|---|---|
+| baseline_linear | 백본 고정, 마지막 층만 학습, 3에폭, 임계값 0.5 | 0.8012 | 0.9074 | 0.7195 | 0.7704 | 3,352 | 2,563 |
 
-전체 실험 기록: `experiments.csv`, 단계별 판단 근거: `NOTES.md`
+- 베이스라인의 패치당 기대 비용(임계값 0.5): k=1 0.144, k=3 0.308, k=5 0.471, k=7 0.635, k=10 0.880. 전부 "음성"이라고 답하면 k=1 0.292, k=10 2.915
+- 백본 전체 학습(ft_flip, ft_color, ft_posw)과 비-딥러닝 비교는 실행 중이다. 끝나는 대로 이 표에 추가한다
+
+전체 실험 기록: `experiments.csv`, `outputs/tabular_results.csv`. 단계별 판단 근거: `NOTES.md`
+
+## 파일 구성
+| 파일 | 하는 일 |
+|---|---|
+| `src/explore.py` | 환자·패치 수 집계, 이미지 크기 확인, 샘플 그림 |
+| `src/split.py` | 환자 단위 층화 분할 (`--from-lists`: 저장된 환자 목록으로 재현) |
+| `src/cache.py` | 세트별 uint8 배열로 묶기 (가장자리 흰색 패딩) |
+| `src/describe.py` | 표 구조(df.info), 파일 이름 검사, 좌표·환자·픽셀 통계 |
+| `src/preprocess_viz.py` | 전처리 단계별 그림 |
+| `src/common.py` | 정규화, 증강, 모델, 예측, 평가 지표(기대 비용 포함) |
+| `src/train.py` | CNN 학습. 에폭마다 `outputs/logs/<이름>.json` 갱신, 결과는 `experiments.csv` |
+| `src/tabular.py` | 고정 피처/색 피처 + 로지스틱 회귀·RF·XGBoost. 중단 후 재실행하면 이어서 진행 |
+| `scripts/server_setup.sh` | 리눅스 CPU 서버 준비 (패키지, 데이터, 분할, 캐시) |
 
 ## 실행
 ```powershell
 python -m venv .venv; .\.venv\Scripts\Activate.ps1
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu132
-pip install scikit-learn pandas matplotlib pillow tqdm grad-cam kaggle
+pip install scikit-learn pandas matplotlib pillow tqdm kaggle six xgboost tabulate
 kaggle datasets download -d paultimothymooney/breast-histopathology-images -p data\raw
 tar -xf data\raw\breast-histopathology-images.zip -C data\raw --exclude "IDC_regular_ps50_idx5/*"
-python src\explore.py; python src\split.py; python src\cache.py; python src\describe.py
-python src\train.py --name baseline_linear --freeze --epochs 3
+python src\explore.py; python src\split.py --from-lists; python src\cache.py; python src\describe.py
+python -u src\train.py --name baseline_linear --freeze --epochs 3
+python -u src\train.py --name ft_flip --epochs 5 --lr 1e-4 --aug flip
+python -u src\train.py --name ft_color --epochs 5 --lr 1e-4 --aug flipcolor
+python -u src\train.py --name ft_posw --epochs 5 --lr 1e-4 --aug flipcolor --pos-weight 2.58
 ```
-환경: Windows, RTX 4060 Ti 8GB, Python 3.12, PyTorch 2.15 (CUDA 13.2)
+리눅스 CPU 서버: `bash scripts/server_setup.sh` 후 `python -u src/tabular.py` (Kaggle 토큰은 `~/.kaggle/`에 미리 둔다)
+
+환경: Windows, RTX 4060 Ti 8GB, Python 3.12, PyTorch 2.15 (CUDA 13.2). 8GB GPU에서 224 입력으로 백본 전체를 학습할 때 학습·예측 배치는 256이 적당하다 (예측 배치 1024에서는 GPU 메모리가 넘쳐 학습이 수 배 느려졌다, `NOTES.md` 10절)
 
 ## 한계
 연구용 연습 프로젝트다. 진료에 쓰려면 외부 기관 데이터 검증, 의료진 검토, 허가 절차가 필요하며 최종 판단은 사람이 한다.

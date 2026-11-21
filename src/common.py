@@ -106,7 +106,9 @@ def build_model(freeze):
 
 
 @torch.no_grad()
-def predict(model, x_np, img_size, device, bs=1024):
+def predict(model, x_np, img_size, device, bs=256):
+    # bs 1024였을 때 224 입력에서 학습 메모리와 합쳐 8GB를 넘어, Windows 드라이버가 시스템 RAM으로
+    # 넘기면서 학습이 수 배 느려졌다(ft_flip 첫 실행, NOTES 10절). 학습 배치와 같은 256으로 맞춘다.
     model.eval()
     probs = []
     for i in range(0, len(x_np), bs):

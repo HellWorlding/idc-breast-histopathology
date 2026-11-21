@@ -107,6 +107,8 @@ def main():
             seen += len(idx)
         # val 평가. 임계값 0.5는 비교용 고정값이고, 실제 임계값은 나중에 저장된 val 확률로 k별로 고른다
         probs = predict(model, xva, args.img, dev)
+        if dev.type == "cuda":
+            torch.cuda.empty_cache()  # 평가용으로 잡은 메모리를 돌려줘서 다음 에폭 학습과 겹치지 않게
         m = metrics(yva, probs, 0.5)
         rec = {"epoch": ep, "train_loss": round(run_loss / seen, 4), "sec": round(time.time() - t0, 1), **m}
         history.append(rec)
