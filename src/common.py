@@ -93,15 +93,32 @@ def augment_color(x, j=COLOR_JITTER):
     return x.clamp_(0, 1)
 
 
-# 모델:ImageNet 사전학습 ResNet18의 마지막 층을 출력 1개(IDC 로짓)로 바꾼다.
-# freeze=True면 fc만 학습 = '사전학습 특징이 얼마나 쓸모 있나'를 보는 베이스라인
-def build_model(freeze):
+# 모델: torchvision ImageNet 사전학습 모델의 마지막 층만 출력 1개(IDC 로짓)로 바꾼다.
+# freeze=True면 마지막 층만 학습 = '사전학습 특징이 얼마나 쓸모 있나'를 보는 베이스라인
+# 모델마다 마지막 층 이름이 달라서 (생성 함수, 가중치, 마지막 층 경로)를 표로 둔다.
+ARCHS = {
+    "resnet18": ("resnet18", "ResNet18_Weights", "fc"),
+    "efficientnet_b0": ("efficientnet_b0", "EfficientNet_B0_Weights", "classifier.1"),
+    "densenet121": ("densenet121", "DenseNet121_Weights", "classifier"),
+    "swin_t": ("swin_t", "Swin_T_Weights", "head"),
+}
+
+
+def build_model(freeze, arch="resnet18"):
     import torchvision
-    m = torchvision.models.resnet18(weights=torchvision.models.ResNet18_Weights.IMAGENET1K_V1)
-    m.fc = nn.Linear(m.fc.in_features, 1)
+    fn, weights, head = ARCHS[arch]
+    m = getattr(torchvision.models, fn)(weights=getattr(torchvision.models, weights).IMAGENET1K_V1)
+    parent = m.get_submodule(head.rsplit(".", 1)[0]) if "." in head else m
+    last = head.rsplit(".", 1)[-1]
+    old = getattr(parent, last) if not last.isdigit() else parent[int(last)]
+    new = nn.Linear(old.in_features, 1)
+    if last.isdigit():
+        parent[int(last)] = new
+    else:
+        setattr(parent, last, new)
     if freeze:
         for name, p in m.named_parameters():
-            p.requires_grad = name.startswith("fc.")
+            p.requires_grad = name.startswith(head + ".")
     return m
 
 
@@ -148,6 +165,8 @@ def append_experiment(row):
     df = pd.DataFrame([row])
     if path.exists():
         df = pd.concat([pd.read_csv(path), df], ignore_index=True)
+    if "arch" in df:  # --arch 추가 전 실험은 모두 resnet18
+        df["arch"] = df["arch"].fillna("resnet18")
     df.to_csv(path, index=False, encoding="utf-8-sig")  # 엑셀/구글시트에서 한글 안 깨지게
 
 

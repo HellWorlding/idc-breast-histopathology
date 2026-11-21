@@ -73,10 +73,17 @@
 ## 결과 (진행 중, 검증 세트)
 | 실험 | 설명 | PR-AUC | ROC-AUC | 재현율 | 정밀도 | FN | FP |
 |---|---|---|---|---|---|---|---|
-| baseline_linear | 백본 고정, 마지막 층만 학습, 3에폭, 임계값 0.5 | 0.8012 | 0.9074 | 0.7195 | 0.7704 | 3,352 | 2,563 |
+| baseline_linear | 백본 고정, 마지막 층만 학습, 3에폭 | 0.8012 | 0.9074 | 0.7195 | 0.7704 | 3,352 | 2,563 |
+| ft_flip | 백본 전체 학습, 뒤집기/회전, 5에폭 중 4 | 0.8900 | 0.9470 | 0.7922 | 0.8201 | 2,483 | 2,077 |
+| ft_color | + 색 증강 | 0.9005 | 0.9523 | 0.8187 | 0.8230 | 2,167 | 2,104 |
+| ft_posw | + 양성 가중치 2.58 | 0.9011 | 0.9525 | 0.8983 | 0.7376 | 1,215 | 3,820 |
 
-- 베이스라인의 패치당 기대 비용(임계값 0.5): k=1 0.144, k=3 0.308, k=5 0.471, k=7 0.635, k=10 0.880. 전부 "음성"이라고 답하면 k=1 0.292, k=10 2.915
-- 백본 전체 학습(ft_flip, ft_color, ft_posw)과 비-딥러닝 비교는 실행 중이다. 끝나는 대로 이 표에 추가한다
+(재현율·정밀도·FN·FP는 임계값 0.5 기준. 세 실험 모두 val PR-AUC가 가장 높은 4에폭을 골랐다)
+
+- 패치당 기대 비용(임계값 0.5, k=1 / 5 / 10): baseline 0.144 / 0.471 / 0.880 → ft_color 0.104 / 0.316 / 0.580 → ft_posw 0.123 / 0.241 / 0.390. 전부 "음성"이라고 답하면 0.292 / 1.458 / 2.915
+- 백본 전체 학습이 가장 큰 개선이었고, 색 증강은 PR-AUC와 FN을 조금 더 개선했다
+- 양성 가중치는 PR-AUC(순위 매기는 능력)를 거의 바꾸지 않고 확률을 양성 쪽으로 옮겨, 임계값 0.5에서 FN을 2,167 → 1,215로 줄이는 대신 FP를 늘렸다. 임계값을 k별로 다시 고르면 비슷한 효과를 낼 수 있어 6단계에서 비교한다
+- 진행 중: 다른 모델(efficientnet_b0, densenet121, swin_t) 비교, 비-딥러닝 비교(CPU 서버), k별 임계값 선택
 
 전체 실험 기록: `experiments.csv`, `outputs/tabular_results.csv`. 단계별 판단 근거: `NOTES.md`
 
@@ -97,7 +104,7 @@
 ```powershell
 python -m venv .venv; .\.venv\Scripts\Activate.ps1
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu132
-pip install scikit-learn pandas matplotlib pillow tqdm kaggle six xgboost tabulate
+pip install scikit-learn pandas matplotlib pillow tqdm kaggle six xgboost tabulate grad-cam
 kaggle datasets download -d paultimothymooney/breast-histopathology-images -p data\raw
 tar -xf data\raw\breast-histopathology-images.zip -C data\raw --exclude "IDC_regular_ps50_idx5/*"
 python src\explore.py; python src\split.py --from-lists; python src\cache.py; python src\describe.py
@@ -111,4 +118,5 @@ python -u src\train.py --name ft_posw --epochs 5 --lr 1e-4 --aug flipcolor --pos
 환경: Windows, RTX 4060 Ti 8GB, Python 3.12, PyTorch 2.15 (CUDA 13.2). 8GB GPU에서 224 입력으로 백본 전체를 학습할 때 학습·예측 배치는 256이 적당하다 (예측 배치 1024에서는 GPU 메모리가 넘쳐 학습이 수 배 느려졌다, `NOTES.md` 10절)
 
 ## 한계
-연구용 연습 프로젝트다. 진료에 쓰려면 외부 기관 데이터 검증, 의료진 검토, 허가 절차가 필요하며 최종 판단은 사람이 한다.
+- 연구용 연습 프로젝트다. 진료에 쓰려면 외부 기관 데이터 검증, 의료진 검토, 허가 절차가 필요하며 최종 판단은 사람이 한다.
+- **환자 단위 분리를 완전히 보장할 수 없다.** 데이터 출처 설명은 여성 162명의 슬라이드라고 하지만, 환자 폴더는 279개다. 이 프로젝트는 폴더 ID를 환자로 보고 나눴는데, 한 사람의 슬라이드가 여러 폴더로 나뉘어 있다면 같은 사람의 조직이 train과 test에 함께 들어갔을 수 있다. 폴더와 실제 환자의 대응 정보가 공개되어 있지 않아 확인하지 못했고, 그 경우 성능이 실제보다 다소 높게 나올 수 있다.

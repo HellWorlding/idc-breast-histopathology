@@ -26,7 +26,9 @@ from common import (OUT, ROOT, append_experiment, augment_flip_rot, build_model,
 def parse():
     ap = argparse.ArgumentParser()
     ap.add_argument("--name", required=True)
-    ap.add_argument("--freeze", action="store_true", help="백본 고정, 마지막 층(fc)만 학습")
+    ap.add_argument("--arch", default="resnet18", choices=["resnet18", "efficientnet_b0", "densenet121", "swin_t"],
+                    help="torchvision ImageNet 사전학습 모델 (마지막 층만 1출력으로 교체)")
+    ap.add_argument("--freeze", action="store_true", help="백본 고정, 마지막 층만 학습")
     ap.add_argument("--epochs", type=int, default=3)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--wd", type=float, default=1e-4)
@@ -56,7 +58,7 @@ def main():
 
     # --- 모델과 최적화: 학습할 파라미터만 AdamW에 넘기고, 스텝 단위 코사인 감소로 lr을 줄인다.
     #     pos_weight > 1이면 양성 오답에 손실을 더 줘서 FN을 줄이는 방향으로 학습한다 ---
-    model = build_model(args.freeze).to(dev)
+    model = build_model(args.freeze, args.arch).to(dev)
     params = [p for p in model.parameters() if p.requires_grad]
     print(f"trainable params: {sum(p.numel() for p in params):,}", flush=True)
     opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=args.wd)
@@ -82,6 +84,8 @@ def main():
     # --- 에폭 루프: 학습 → val 평가 → val PR-AUC가 가장 좋을 때만 체크포인트 저장 ---
     for ep in range(1, args.epochs + 1):
         t0 = time.time()
+        if dev.type == "cuda":
+            torch.cuda.reset_peak_memory_stats()
         model.train()
         if args.freeze:
             model.eval()  # 고정한 백본의 BatchNorm 통계가 바뀌지 않게
@@ -106,15 +110,17 @@ def main():
             run_loss += loss.item() * len(idx)
             seen += len(idx)
         # val 평가. 임계값 0.5는 비교용 고정값이고, 실제 임계값은 나중에 저장된 val 확률로 k별로 고른다
-        probs = predict(model, xva, args.img, dev)
+        train_sec = round(time.time() - t0, 1)
+        probs = predict(model, xva, args.img, dev, bs=args.bs)
+        gpu_gb = round(torch.cuda.max_memory_reserved() / 2**30, 2) if dev.type == "cuda" else 0
         if dev.type == "cuda":
             torch.cuda.empty_cache()  # 평가용으로 잡은 메모리를 돌려줘서 다음 에폭 학습과 겹치지 않게
         m = metrics(yva, probs, 0.5)
-        rec = {"epoch": ep, "train_loss": round(run_loss / seen, 4), "sec": round(time.time() - t0, 1), **m}
+        rec = {"epoch": ep, "train_loss": round(run_loss / seen, 4), "sec": round(time.time() - t0, 1), "train_sec": train_sec, "gpu_gb": gpu_gb, **m}
         history.append(rec)
         print(f"ep {ep}: train_loss {rec['train_loss']} | val loss {m['loss']} pr_auc {m['pr_auc']} "
               f"roc_auc {m['roc_auc']} recall {m['recall']} precision {m['precision']} f2 {m['f2']} "
-              f"FN {m['FN']} FP {m['FP']} | {rec['sec']}s", flush=True)
+              f"FN {m['FN']} FP {m['FP']} | {rec['sec']}s, gpu peak {gpu_gb}GB", flush=True)
         if best is None or m["pr_auc"] > best["pr_auc"]:
             best, best_probs = rec, probs
             torch.save(model.state_dict(), ckpt)
@@ -126,11 +132,11 @@ def main():
     preds_dir.mkdir(parents=True, exist_ok=True)
     np.save(preds_dir / f"{args.name}_val.npy", best_probs)
     save_json({"args": vars(args), "status": "done", "best_epoch": best["epoch"], "history": history}, log_path)
-    row = {"time": datetime.now().strftime("%Y-%m-%d %H:%M"), "name": args.name, "freeze": args.freeze,
+    row = {"time": datetime.now().strftime("%Y-%m-%d %H:%M"), "name": args.name, "arch": args.arch, "freeze": args.freeze,
            "epochs": args.epochs, "best_epoch": best["epoch"], "lr": args.lr, "bs": args.bs, "img": args.img,
            "aug": args.aug, "pos_weight": args.pos_weight, "limit": args.limit, "seed": args.seed,
            "total_min": round((time.time() - t_start) / 60, 1),
-           **{f"val_{k}": v for k, v in best.items() if k not in ("epoch", "sec")}}
+           **{f"val_{k}": v for k, v in best.items() if k not in ("epoch", "sec", "train_sec", "gpu_gb")}}
     append_experiment(row)
     print("best epoch", best["epoch"], "-> experiments.csv, outputs/preds, checkpoint saved", flush=True)
 
