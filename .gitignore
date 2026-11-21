@@ -1,7 +1,13 @@
 # 가상환경
 .venv/
 # 데이터 (Kaggle 원본, 캐시, 분할 목록은 용량/재배포 문제로 올리지 않음 - 코드로 재생성 가능)
-data/
+data/*
+# 예외: 환자 단위 분할 목록 3개만 올린다 (서버와 데스크톱 분할을 똑같이 맞추기 위해, 환자 ID만 있음)
+!data/splits/
+data/splits/*
+!data/splits/train_patients.csv
+!data/splits/val_patients.csv
+!data/splits/test_patients.csv
 # 큰 산출물
 outputs/checkpoints/
 outputs/preds/

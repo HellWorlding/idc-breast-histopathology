@@ -31,10 +31,13 @@ def load_split(name):
     return x, y
 
 
-def to_input(xb, img_size):
+def to_input(xb, img_size, color_aug=False):
     """uint8 NHWC (GPU) -> 정규화된 float NCHW. 정규화는 ImageNet 통계(사전학습과 같은 기준)를
-    쓰므로 우리 데이터의 어느 세트에서도 통계를 계산하지 않는다 → 정규화로 인한 누수 없음."""
+    쓰므로 우리 데이터의 어느 세트에서도 통계를 계산하지 않는다 → 정규화로 인한 누수 없음.
+    color_aug=True(학습 때만)면 50x50 단계에서 색 증강을 먼저 적용한다 (작은 해상도라 빠름)."""
     x = xb.permute(0, 3, 1, 2).float().div_(255)
+    if color_aug:
+        x = augment_color(x)
     if img_size != x.shape[-1]:
         x = F.interpolate(x, size=(img_size, img_size), mode="bilinear", align_corners=False)
     mean = x.new_tensor(IMAGENET_MEAN).view(1, 3, 1, 1)
@@ -58,7 +61,39 @@ def augment_flip_rot(xb):
     return xb
 
 
-# 모델: ImageNet 사전학습 ResNet18의 마지막 층을 출력 1개(IDC 로짓)로 바꾼다.
+# 색 증강: 패치마다 밝기·대비·채도·색조를 조금씩 무작위로 바꾼다 (GPU, float NCHW 0~1).
+# 왜: train에서 양성이 모든 채널에서 평균 약 14% 어둡고 흰 픽셀이 적다(9.6% vs 28.4%).
+#     밝기 ±15%는 이 차이와 비슷한 크기라, 모델이 '어두우면 양성' 같은 색 지름길에 덜 기대게 된다.
+#     염색 차이(환자·기관마다 다른 H&E 색감)에 대한 강건성도 함께 노린다.
+COLOR_JITTER = {"brightness": 0.15, "contrast": 0.15, "saturation": 0.15, "hue": 0.04}
+_RGB2YIQ = torch.tensor([[0.299, 0.587, 0.114], [0.596, -0.274, -0.322], [0.211, -0.523, 0.312]])
+
+
+def augment_color(x, j=COLOR_JITTER):
+    n = x.shape[0]
+
+    def factor(amount):  # 패치별 [1-amount, 1+amount] 균등 분포
+        return 1 + (torch.rand(n, 1, 1, 1, device=x.device) * 2 - 1) * amount
+
+    gray = (0.299 * x[:, 0] + 0.587 * x[:, 1] + 0.114 * x[:, 2]).unsqueeze(1)
+    x = x * factor(j["brightness"])
+    mean = gray.mean(dim=(2, 3), keepdim=True)
+    x = (x - mean) * factor(j["contrast"]) + mean
+    gray = (0.299 * x[:, 0] + 0.587 * x[:, 1] + 0.114 * x[:, 2]).unsqueeze(1)
+    x = gray + (x - gray) * factor(j["saturation"])
+    # 색조: YIQ 공간에서 색 성분(I, Q)을 작은 각도만큼 회전 (각도 = hue * 2π)
+    theta = (torch.rand(n, device=x.device) * 2 - 1) * j["hue"] * 2 * torch.pi
+    m = _RGB2YIQ.to(x.device)
+    cos, sin = theta.cos(), theta.sin()
+    rot = torch.zeros(n, 3, 3, device=x.device)
+    rot[:, 0, 0] = 1
+    rot[:, 1, 1], rot[:, 1, 2], rot[:, 2, 1], rot[:, 2, 2] = cos, -sin, sin, cos
+    t = torch.linalg.inv(m) @ rot @ m  # 패치별 RGB → RGB 변환 행렬
+    x = torch.einsum("nij,njhw->nihw", t, x)
+    return x.clamp_(0, 1)
+
+
+# 모델:ImageNet 사전학습 ResNet18의 마지막 층을 출력 1개(IDC 로짓)로 바꾼다.
 # freeze=True면 fc만 학습 = '사전학습 특징이 얼마나 쓸모 있나'를 보는 베이스라인
 def build_model(freeze):
     import torchvision
