@@ -33,6 +33,7 @@ SEED = 42
 
 def collect():
     rows = []
+    # 중복 폴더(IDC_regular_ps50_idx5)를 빼고 환자 폴더만 센다. 폴더 이름 0/1이 라벨
     patient_dirs = sorted(p for p in RAW.iterdir() if p.is_dir() and p.name not in EXCLUDE)
     for pdir in tqdm(patient_dirs, desc="patients"):
         for label in ("0", "1"):
@@ -55,6 +56,7 @@ def main():
             sizes[im.size] += 1
     df.to_csv(OUT / "patches_index.csv", index=False)
 
+    # 환자 단위 집계: 환자마다 양성 비율이 크게 달라 이후 층화 분할의 근거가 된다
     per_patient = df.groupby("patient")["label"].agg(n="size", pos="sum")
     per_patient["neg"] = per_patient["n"] - per_patient["pos"]
     per_patient["pos_ratio"] = per_patient["pos"] / per_patient["n"]

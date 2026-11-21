@@ -29,12 +29,15 @@ def main():
     patches = pd.read_csv(ROOT / "outputs" / "patches_index.csv", dtype={"patient": str})
     pp = patches.groupby("patient")["label"].agg(n="size", pos="sum").reset_index()
     pp["pos_ratio"] = pp["pos"] / pp["n"]
+    # 환자별 양성 비율(1%~90%)을 5분위 구간으로 나눠 층화 기준으로 쓴다
     pp["strat"] = pd.qcut(pp["pos_ratio"], q=5, labels=False, duplicates="drop")
 
+    # 환자를 두 번 나눈다: 70 / 30 → 30을 다시 15 / 15. 나누는 단위가 패치가 아니라 환자라는 점이 핵심
     train_p, rest_p = train_test_split(pp, test_size=0.30, stratify=pp["strat"], random_state=SEED)
     val_p, test_p = train_test_split(rest_p, test_size=0.50, stratify=rest_p["strat"], random_state=SEED)
 
     sets = {"train": set(train_p["patient"]), "val": set(val_p["patient"]), "test": set(test_p["patient"])}
+    # 누수 검사: 어떤 환자도 두 세트에 동시에 들어가면 안 된다
     assert not (sets["train"] & sets["val"]), "train/val 환자 겹침"
     assert not (sets["train"] & sets["test"]), "train/test 환자 겹침"
     assert not (sets["val"] & sets["test"]), "val/test 환자 겹침"

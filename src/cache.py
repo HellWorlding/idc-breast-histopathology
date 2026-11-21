@@ -33,6 +33,7 @@ def main():
             h, w = arr.shape[:2]
             if (h, w) != (50, 50):
                 padded += 1
+            # 미리 255(흰색)로 채운 배열의 왼쪽 위에 붙인다 → 모자란 가장자리는 흰색 패딩
             X[i, :min(h, 50), :min(w, 50)] = arr[:50, :50]
         np.save(CACHE / f"{split}_x.npy", X)
         np.save(CACHE / f"{split}_y.npy", sub["label"].to_numpy(np.int64))

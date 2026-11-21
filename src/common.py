@@ -13,7 +13,7 @@ from sklearn.metrics import average_precision_score, confusion_matrix, roc_auc_s
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / "data" / "cache"
 OUT = ROOT / "outputs"
-KS = (1, 5, 10, 20)  # FN 비용 = FP 비용의 k배 (학습 전에 미리 고정)
+KS = (1, 3, 5, 7, 10)  # FN 비용 = FP 비용의 k배. 임계값 선택 전에 고정 (처음 1,5,10,20 → 1,3,5,7,10으로 조정)
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
@@ -58,6 +58,8 @@ def augment_flip_rot(xb):
     return xb
 
 
+# 모델: ImageNet 사전학습 ResNet18의 마지막 층을 출력 1개(IDC 로짓)로 바꾼다.
+# freeze=True면 fc만 학습 = '사전학습 특징이 얼마나 쓸모 있나'를 보는 베이스라인
 def build_model(freeze):
     import torchvision
     m = torchvision.models.resnet18(weights=torchvision.models.ResNet18_Weights.IMAGENET1K_V1)
@@ -85,6 +87,8 @@ def bce(y, p):
     return float(-np.mean(y * np.log(p) + (1 - y) * np.log(1 - p)))
 
 
+# 평가 지표: 정확도는 양성 28%라 쉽게 부풀므로 보조로만 본다.
+# 핵심은 기대 비용 = (FP + k*FN) / N. 암을 놓치는 것(FN)이 오탐(FP)보다 k배 나쁘다고 둔다
 def metrics(y, p, thr=0.5):
     pred = (p >= thr).astype(int)
     tn, fp, fn, tp = confusion_matrix(y, pred, labels=[0, 1]).ravel()
