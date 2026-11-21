@@ -1,0 +1,17 @@
+# 가상환경
+.venv/
+# 데이터 (Kaggle 원본, 캐시, 분할 목록은 용량/재배포 문제로 올리지 않음 - 코드로 재생성 가능)
+data/
+# 큰 산출물
+outputs/checkpoints/
+outputs/preds/
+outputs/patches_index.csv
+__pycache__/
+*.pyc
+# 로컬 작업 메모 - 저장소에 올리지 않음
+CLAUDE.md
+# 비밀 정보
+.env
+*.json.key
+kaggle.json
+access_token
