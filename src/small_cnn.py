@@ -9,7 +9,7 @@
 왜 하나
 - ImageNet 사전학습 ResNet18과 색 통계 모델 사이에서, '작은 CNN이 원본 패치만으로 어디까지 가나'를 본다.
 
-시간 관리: 첫 에폭의 처음 40배치로 에폭 시간을 추정하고, 전체가 60분을 넘을 것 같으면 에폭 수를 줄인다.
+시간 관리: 첫 에폭 초반에 에폭 시간을 추정해 알려 주고, 에폭이 끝날 때마다 실측 시간으로 남은 에폭을 다 돌면\n한도(--budget 분)를 넘는지 확인해 넘으면 에폭 수를 줄인다.
 서버 정지 대비: 에폭마다 체크포인트를 저장하고, 다시 실행하면 이어서 학습한다.
 
 색 실험 (2차 대기열): --gray 는 같은 구조에 흑백 입력을 준다. 밝기(0.299R+0.587G+0.114B)를 3채널에 똑같이 넣어
@@ -145,12 +145,8 @@ def main():
                 st["timed"] = True
                 st["est_epoch_min"] = round(est_ep, 2)
                 log(f"1에폭 예상 {est_ep:.2f}분 → {st['max_epochs']}에폭 예상 {est_ep * st['max_epochs']:.1f}분")
-                if est_ep * st["max_epochs"] > args.budget * 0.92:
-                    new = max(1, int(args.budget * 0.92 / est_ep))
-                    st["note"] = (f"에폭 수를 {st['max_epochs']}에서 {new}로 줄임: 1에폭 예상 {est_ep:.1f}분이라 "
-                                  f"전체가 {args.budget:g}분을 넘음")
-                    st["max_epochs"] = new
-                    log(st["note"])
+                # 이 초반 추정은 실제보다 크게 나오는 경향이 있어(1차: 예상 3.78분, 실제 약 2분) 여기서는 줄이지 않는다.
+                # 줄일지는 에폭이 끝날 때마다 실측 시간으로 판단한다 (아래).
         p = predict(model, xva, gray=args.gray)
         m = metrics(yva, p, 0.5)
         ep_min = (time.time() - t0) / 60
