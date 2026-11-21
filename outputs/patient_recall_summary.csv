@@ -1,0 +1,3 @@
+﻿name,thr_k5_cost_min,patch_recall,patch_precision,cost_k5,n_idc_patients,recall_mean,recall_median,recall_min,recall_q25,recall_q75,n_recall_zero,n_recall_below_0.5,n_recall_below_0.8,n_val_patients
+ft_color,0.145,0.9377,0.6649,0.2285,42,0.9239,0.9562,0.6199,0.8971,0.9804,0,0,4,42
+arch_swint,0.0874,0.9487,0.6814,0.2041,42,0.9364,0.9647,0.6018,0.9089,0.9871,0,0,2,42
